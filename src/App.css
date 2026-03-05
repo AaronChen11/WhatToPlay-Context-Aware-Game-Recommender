@@ -195,6 +195,19 @@
   gap: 2px;
 }
 
+.friend-status.online {
+  color: #66c0f4;
+}
+
+.friend-status.in-game,
+.friend-game {
+  color: #9ad64d;
+}
+
+.friend-status.offline {
+  color: var(--text-muted);
+}
+
 .auth-box {
   border: 1px solid var(--border);
   border-radius: 12px;

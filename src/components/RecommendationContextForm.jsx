@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 const GOALS = ['Relax', 'Competitive', 'Story', 'Social']
 
@@ -24,7 +24,13 @@ function RecommendationContextForm({
   error,
 }) {
   const [timeDraft, setTimeDraft] = useState(String(timeAvailable))
-  const friendsToRender = steamFriends || []
+  const friendsToRender = useMemo(() => {
+    const source = steamFriends || []
+    return [...source].sort((a, b) => {
+      if (Boolean(a.online) === Boolean(b.online)) return 0
+      return a.online ? -1 : 1
+    })
+  }, [steamFriends])
   const showFriendsLoading = dataSource === 'private' && friendsLoading
   const hasFriends = friendsToRender.length > 0
   const canRefreshFriends = typeof onRefreshFriends === 'function'
@@ -168,35 +174,42 @@ function RecommendationContextForm({
           {showFriendsLoading && <small className="auth-note">Loading Steam friends...</small>}
           {!showFriendsLoading && hasFriends && (
             <ul className="friends-list steam-style">
-              {friendsToRender.map((friend, index) => (
-                <li key={friend.steamid || friend.id || `${friend.name}-${index}`}>
-                  <div className="friend-avatar-wrap">
-                    {friend.avatar ? (
-                      <img
-                        src={friend.avatar}
-                        alt={friend.name}
-                        className="friend-avatar"
-                        loading="lazy"
-                        decoding="async"
-                        fetchPriority="low"
-                      />
-                    ) : (
-                      <div className="friend-avatar placeholder-avatar" />
-                    )}
-                  </div>
-                  <div className="friend-meta">
-                    <span>{friend.name}</span>
-                    <small>{friend.status || (friend.online ? 'Online' : 'Offline')}</small>
-                    {friend.game && <small>Playing {friend.game}</small>}
-                  </div>
-                </li>
-              ))}
+              {friendsToRender.map((friend, index) => {
+                const isInGame = Boolean(friend.game)
+                const statusText = isInGame
+                  ? 'In-Game'
+                  : friend.status || (friend.online ? 'Online' : 'Offline')
+                return (
+                  <li key={friend.steamid || friend.id || `${friend.name}-${index}`}>
+                    <div className="friend-avatar-wrap">
+                      {friend.avatar ? (
+                        <img
+                          src={friend.avatar}
+                          alt={friend.name}
+                          className="friend-avatar"
+                          loading="lazy"
+                          decoding="async"
+                          fetchPriority="low"
+                        />
+                      ) : (
+                        <div className="friend-avatar placeholder-avatar" />
+                      )}
+                    </div>
+                    <div className="friend-meta">
+                      <span>{friend.name}</span>
+                      <small className={isInGame ? 'friend-status in-game' : friend.online ? 'friend-status online' : 'friend-status offline'}>
+                        {statusText}
+                      </small>
+                      {friend.game && <small className="friend-game">Playing {friend.game}</small>}
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           )}
           {!showFriendsLoading && !hasFriends && !friendsError && dataSource === 'private' && (
             <small className="auth-note">No Steam friends found.</small>
           )}
-          {!friendsOnline && <small className="friends-note">Enable the toggle to prioritize social recommendations.</small>}
         </div>
       </div>
 

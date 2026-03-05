@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
 import IntroPage from './pages/IntroPage'
 import SignInPage from './pages/SignInPage'
@@ -301,7 +301,7 @@ function App() {
     localStorage.setItem('theme', theme)
   }, [theme])
 
-  const refreshMe = async (authToken = token) => {
+  const refreshMe = useCallback(async (authToken = token) => {
     if (!authToken) {
       setMe(null)
       return
@@ -315,13 +315,13 @@ function App() {
       setToken('')
       setMe(null)
     }
-  }
+  }, [token])
 
   useEffect(() => {
     refreshMe()
-  }, [])
+  }, [refreshMe])
 
-  const fetchSteamFriends = async () => {
+  const fetchSteamFriends = useCallback(async () => {
     if (!token || !steamBound) return
     setFriendsLoading(true)
     setFriendsError('')
@@ -334,13 +334,13 @@ function App() {
     } finally {
       setFriendsLoading(false)
     }
-  }
+  }, [steamBound, token])
 
   useEffect(() => {
     if (currentStep === 'dashboard') {
       fetchSteamFriends()
     }
-  }, [currentStep, token, steamBound])
+  }, [currentStep, fetchSteamFriends])
 
   useEffect(() => {
     if (me?.steam?.steamid) {
@@ -415,8 +415,8 @@ function App() {
         method: 'POST',
         token,
       })
-      setSteamMessage(`Steam sync complete. Synced ${payload.synced || 0} games.`)
-      setLibrarySyncNotice('Library sync started. Metadata enrichment/indexing runs in background and may take 2-5 minutes.')
+      setSteamMessage(`Steam library ownership sync complete. Imported ${payload.synced || 0} games.`)
+      setLibrarySyncNotice('Metadata enrichment and index rebuild are still running in the background, so recommendations may update gradually for the next few minutes.')
       await fetchSteamFriends()
     } catch (err) {
       setSteamMessage(`Steam sync failed: ${err.message}`)
