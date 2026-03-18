@@ -14,12 +14,12 @@ function HeroText({ onStartLogin, onStartRegister, onExploreMore }) {
 
   useEffect(() => {
     if (visibleWords < titleWords.length) {
-      const timer = setTimeout(() => setVisibleWords((v) => v + 1), 420)
+      const timer = setTimeout(() => setVisibleWords((v) => v + 1), 720)
       return () => clearTimeout(timer)
     }
 
-    const subtitleTimer = setTimeout(() => setSubtitleVisible(true), 220)
-    const supportTimer = setTimeout(() => setSupportVisible(true), 460)
+    const subtitleTimer = setTimeout(() => setSubtitleVisible(true), 420)
+    const supportTimer = setTimeout(() => setSupportVisible(true), 860)
     return () => {
       clearTimeout(subtitleTimer)
       clearTimeout(supportTimer)
@@ -39,7 +39,7 @@ function HeroText({ onStartLogin, onStartRegister, onExploreMore }) {
           <span
             key={word}
             className={index < visibleWords ? 'hero-word visible' : 'hero-word'}
-            style={{ transitionDelay: `${index * 0.14}s` }}
+            style={{ transitionDelay: `${index * 0.28}s` }}
           >
             <span className={word === 'STUDIO' ? 'hero-title-secondary' : 'hero-title-primary'}>{word}</span>
           </span>
