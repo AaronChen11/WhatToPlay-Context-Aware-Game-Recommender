@@ -193,6 +193,7 @@ def public_recommend():
                 "savings": deal.get("savings"),
                 "steamRatingPercent": deal.get("steamRatingPercent"),
                 "thumb": deal.get("thumb"),
+                "steamAppID": deal.get("steamAppID"),
             }
         )
 

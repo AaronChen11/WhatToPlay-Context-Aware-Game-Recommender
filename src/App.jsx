@@ -45,6 +45,7 @@ const FALLBACK_GAMES = [
 ]
 
 const clamp = (num, min, max) => Math.max(min, Math.min(max, num))
+const normalizeTitle = (value = '') => String(value).toLowerCase().replace(/[^a-z0-9]/g, '')
 
 const getInitialTheme = () => {
   const savedTheme = localStorage.getItem('theme')
@@ -185,6 +186,14 @@ async function fetchPublicRecommendations({ timeAvailable, energy, goal, device,
   return payload.results || []
 }
 
+async function fetchOwnedLibraryIndex({ token }) {
+  const payload = await apiRequest('/api/steam/library_index', { token })
+  return {
+    appids: payload.appids || [],
+    titles: payload.titles || [],
+  }
+}
+
 const normalizePrivateItem = (item, device) => ({
   id: item.appid,
   appid: item.appid,
@@ -248,6 +257,8 @@ function App() {
   const [publicDismissedIds, setPublicDismissedIds] = useState(new Set())
   const [acceptedQueue, setAcceptedQueue] = useState([])
   const [discoverShopList, setDiscoverShopList] = useState([])
+  const [ownedLibraryAppids, setOwnedLibraryAppids] = useState([])
+  const [ownedLibraryTitles, setOwnedLibraryTitles] = useState([])
   const [actionMessage, setActionMessage] = useState('')
   const [selectedAlternativeId, setSelectedAlternativeId] = useState(null)
   const [selectedPublicAlternativeId, setSelectedPublicAlternativeId] = useState(null)
@@ -280,9 +291,27 @@ function App() {
     () => rankedGames.filter((g) => !dismissedIds.has(g.id || g.appid)),
     [rankedGames, dismissedIds],
   )
+  const ownedAppidSet = useMemo(
+    () => new Set(ownedLibraryAppids.map((id) => Number(id)).filter((id) => !Number.isNaN(id))),
+    [ownedLibraryAppids],
+  )
+  const ownedTitleSet = useMemo(
+    () => new Set(ownedLibraryTitles.map((title) => normalizeTitle(title)).filter(Boolean)),
+    [ownedLibraryTitles],
+  )
+  const filteredPublicRankedGames = useMemo(
+    () => publicRankedGames.filter((game) => {
+      const steamAppID = Number(game.steamAppID || game.steam_appid || 0)
+      if (steamAppID && ownedAppidSet.has(steamAppID)) return false
+      const titleKey = normalizeTitle(game.title)
+      if (titleKey && ownedTitleSet.has(titleKey)) return false
+      return true
+    }),
+    [publicRankedGames, ownedAppidSet, ownedTitleSet],
+  )
   const publicVisibleGames = useMemo(
-    () => publicRankedGames.filter((g) => !publicDismissedIds.has(g.id || g.appid)),
-    [publicRankedGames, publicDismissedIds],
+    () => filteredPublicRankedGames.filter((g) => !publicDismissedIds.has(g.id || g.appid)),
+    [filteredPublicRankedGames, publicDismissedIds],
   )
   const topPick = visibleGames[0] || null
   const alternatives = useMemo(() => visibleGames.slice(1, 6), [visibleGames])
@@ -359,11 +388,24 @@ function App() {
     }
   }, [steamBound, token])
 
+  const refreshOwnedLibraryIndex = useCallback(async () => {
+    if (!token || !steamBound) return
+    try {
+      const payload = await fetchOwnedLibraryIndex({ token })
+      setOwnedLibraryAppids(payload.appids)
+      setOwnedLibraryTitles(payload.titles)
+    } catch {
+      setOwnedLibraryAppids([])
+      setOwnedLibraryTitles([])
+    }
+  }, [steamBound, token])
+
   useEffect(() => {
     if (currentStep === 'dashboard') {
       fetchSteamFriends()
+      refreshOwnedLibraryIndex()
     }
-  }, [currentStep, fetchSteamFriends])
+  }, [currentStep, fetchSteamFriends, refreshOwnedLibraryIndex])
 
   useEffect(() => {
     if (me?.steam?.steamid) {
@@ -407,6 +449,8 @@ function App() {
     setDismissedIds(new Set())
     setAcceptedQueue([])
     setDiscoverShopList([])
+    setOwnedLibraryAppids([])
+    setOwnedLibraryTitles([])
   }
 
   const handleBindSteam = async () => {
@@ -423,6 +467,7 @@ function App() {
       setSteamMessage(`Steam linked: ${payload.steam?.persona || payload.steam?.steamid}`)
       await refreshMe()
       await fetchSteamFriends()
+      await refreshOwnedLibraryIndex()
     } catch (err) {
       setSteamMessage(`Steam bind failed: ${err.message}`)
     } finally {
@@ -443,6 +488,7 @@ function App() {
       setSteamMessage(`Steam library ownership sync complete. Imported ${payload.synced || 0} games.`)
       setLibrarySyncNotice('Metadata enrichment and index rebuild are still running in the background, so recommendations may update gradually for the next few minutes.')
       await fetchSteamFriends()
+      await refreshOwnedLibraryIndex()
     } catch (err) {
       setSteamMessage(`Steam sync failed: ${err.message}`)
     } finally {

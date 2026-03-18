@@ -288,3 +288,22 @@ def get_steam_friends():
             "friends": friends,
         }
     ), 200
+
+
+@steam_bp.get("/library_index")
+@jwt_required()
+def get_library_index():
+    user_id = int(get_jwt_identity())
+    sp = SteamProfile.query.filter_by(auth_user_id=user_id).first()
+    if not sp:
+        return jsonify({"error": "steam_not_bound"}), 400
+
+    stats = UserGameStat.query.filter_by(steamid=sp.steamid).all()
+    appids = [int(stat.appid) for stat in stats]
+
+    titles = []
+    if appids:
+        rows = GameCatalog.query.filter(GameCatalog.appid.in_(appids)).all()
+        titles = [row.name for row in rows if row.name]
+
+    return jsonify({"ok": True, "appids": appids, "titles": titles}), 200
