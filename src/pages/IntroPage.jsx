@@ -1,27 +1,9 @@
+import HeroFuturistic from '../components/ui/HeroFuturistic'
+
 function IntroPage({ onStartLogin, onStartRegister }) {
   return (
     <div className="intro-page">
-      <div className="intro-hero">
-        <p className="eyebrow">Welcome to GameFlow Studio</p>
-        <h1>Pick the right game for your current mood and time.</h1>
-        <p className="subtitle">
-          A context-aware game recommender that combines your available time, energy, device, and social context to rank what you should play next.
-        </p>
-
-        <div className="intro-actions">
-          <button type="button" className="cta cta-small" onClick={onStartLogin}>
-            Login
-          </button>
-          <button type="button" className="chip intro-secondary-btn" onClick={onStartRegister}>
-            Create Account
-          </button>
-        </div>
-        <div className="intro-learn-row">
-          <a className="chip intro-link-btn" href="#how-it-works">
-            Learn More
-          </a>
-        </div>
-      </div>
+      <HeroFuturistic onStartLogin={onStartLogin} onStartRegister={onStartRegister} />
 
       <div id="intro-features" className="intro-grid">
         <article className="intro-card">

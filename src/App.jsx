@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
-import IntroPage from './pages/IntroPage'
+import HeroLandingPage from './pages/HeroLandingPage'
 import SignInPage from './pages/SignInPage'
 import SteamSetupPage from './pages/SteamSetupPage'
 import RecommendationsDashboardPage from './pages/RecommendationsDashboardPage'
@@ -255,7 +255,7 @@ function App() {
 
   const [token, setToken] = useState(localStorage.getItem(TOKEN_KEY) || '')
   const [authMode, setAuthMode] = useState('login')
-  const [showIntroPage, setShowIntroPage] = useState(true)
+  const [showIntroPage, setShowIntroPage] = useState(() => window.location.hash !== '#signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
@@ -321,6 +321,16 @@ function App() {
     refreshMe()
   }, [refreshMe])
 
+  useEffect(() => {
+    const syncIntroFromHash = () => {
+      if (window.location.hash === '#signin') setShowIntroPage(false)
+    }
+
+    window.addEventListener('hashchange', syncIntroFromHash)
+    syncIntroFromHash()
+    return () => window.removeEventListener('hashchange', syncIntroFromHash)
+  }, [])
+
   const fetchSteamFriends = useCallback(async () => {
     if (!token || !steamBound) return
     setFriendsLoading(true)
@@ -378,6 +388,7 @@ function App() {
     setToken('')
     setMe(null)
     setShowIntroPage(true)
+    window.location.hash = ''
     setSteamMessage('Logged out')
     setSteamFriends([])
     setDismissedIds(new Set())
@@ -574,6 +585,20 @@ function App() {
     setActionMessage('Play Next queue refreshed.')
   }
 
+  if (currentStep === 'auth' && showIntroPage) {
+    return (
+      <main className="landing-shell">
+        <HeroLandingPage
+          onExploreMore={() => {
+            setAuthMode('login')
+            setShowIntroPage(false)
+            window.location.hash = 'signin'
+          }}
+        />
+      </main>
+    )
+  }
+
   return (
     <main className="app-shell">
       <section className="checkin-panel">
@@ -594,34 +619,21 @@ function App() {
         </div>
 
         {currentStep === 'auth' && (
-          showIntroPage ? (
-            <IntroPage
-              onStartLogin={() => {
-                setAuthMode('login')
-                setShowIntroPage(false)
-              }}
-              onStartRegister={() => {
-                setAuthMode('register')
-                setShowIntroPage(false)
-              }}
-            />
-          ) : (
-            <SignInPage
-              onBackToIntro={() => setShowIntroPage(true)}
-              isAuthed={isAuthed}
-              authMode={authMode}
-              setAuthMode={setAuthMode}
-              email={email}
-              setEmail={setEmail}
-              password={password}
-              setPassword={setPassword}
-              authBusy={authBusy}
-              authError={authError}
-              onSubmit={handleAuthSubmit}
-              me={me}
-              onLogout={handleLogout}
-            />
-          )
+          <SignInPage
+            onBackToIntro={() => setShowIntroPage(true)}
+            isAuthed={isAuthed}
+            authMode={authMode}
+            setAuthMode={setAuthMode}
+            email={email}
+            setEmail={setEmail}
+            password={password}
+            setPassword={setPassword}
+            authBusy={authBusy}
+            authError={authError}
+            onSubmit={handleAuthSubmit}
+            me={me}
+            onLogout={handleLogout}
+          />
         )}
 
         {currentStep === 'steam' && (
