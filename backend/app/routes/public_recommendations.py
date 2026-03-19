@@ -1,106 +1,72 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 import requests
 from flask import Blueprint, jsonify, request
+
+from app.services.context_ranking import (
+    clamp,
+    compose_game_text,
+    create_standard_reasons,
+    get_device_fit,
+    get_goal_alignment,
+    get_goal_boost,
+    get_intensity_by_text,
+    get_session_length_by_text,
+    get_title_signal_terms,
+    is_social_game,
+    stable_title_tiebreak,
+)
 
 public_bp = Blueprint("public", __name__)
 
 FREETOGAME_URL = "https://www.freetogame.com/api/games"
 CHEAPSHARK_URL = "https://www.cheapshark.com/api/1.0/deals"
 
-
-def clamp(num: float, minimum: float, maximum: float) -> float:
-    return max(minimum, min(maximum, num))
-
-
 def normalize_title(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
 
 
-def get_session_length_by_genre(genre: str = "") -> int:
-    key = genre.lower()
-    if any(x in key for x in ("battle", "moba", "shooter")):
-        return 30
-    if any(x in key for x in ("roguel", "action")):
-        return 40
-    if any(x in key for x in ("racing", "sports")):
-        return 35
-    if any(x in key for x in ("strategy", "rpg")):
-        return 75
-    if "mmo" in key:
-        return 90
-    if any(x in key for x in ("adventure", "story")):
-        return 60
-    if any(x in key for x in ("sandbox", "simulation")):
-        return 50
-    return 45
 
 
-def get_intensity_by_genre(genre: str = "") -> int:
-    key = genre.lower()
-    if any(x in key for x in ("horror", "battle", "moba")):
-        return 3
-    if any(x in key for x in ("shooter", "action", "sports")):
-        return 2
-    if any(x in key for x in ("puzzle", "adventure", "rpg")):
-        return 1
-    if any(x in key for x in ("sandbox", "simulation", "casual")):
-        return 0
-    return 1
+
+def get_release_freshness_signal(release_date: str | None) -> float:
+    if not release_date:
+        return 0.0
+    try:
+        released = datetime.strptime(release_date, "%Y-%m-%d")
+    except ValueError:
+        return 0.0
+    age_years = max(0.0, (datetime.utcnow() - released).days / 365.25)
+    return clamp(2.5 - (age_years * 0.35), -1.0, 2.5)
 
 
-def is_social_genre(genre: str = "") -> bool:
-    key = genre.lower()
-    return any(x in key for x in ("mmo", "battle", "moba", "shooter", "sports"))
+def get_public_market_signal(game: dict[str, Any]) -> float:
+    steam_rating = clamp((float(game.get("steamRatingPercent") or 70)) / 10, 0, 10)
+    savings = clamp(float(game.get("savings") or 0) / 20, 0, 4)
+    deal_rating = clamp(float(game.get("dealRating") or 0) * 0.4, 0, 4)
+    return steam_rating + savings + deal_rating
 
 
-def get_goal_boost(goal: str, genre: str, social_game: bool) -> int:
-    key = genre.lower()
-    if goal == "relax":
-        return 16 if any(x in key for x in ("simulation", "sandbox", "casual", "puzzle")) else -4
-    if goal == "competitive":
-        return 16 if any(x in key for x in ("sports", "battle", "moba", "shooter")) else -4
-    if goal == "story":
-        return 16 if any(x in key for x in ("adventure", "rpg")) else -3
-    if goal == "social":
-        return 16 if social_game else -6
-    return 0
-
-
-def create_reasons(item: dict[str, Any], time_available: int, energy: str, goal: str, friends_online: bool, device: str) -> list[str]:
-    reasons: list[str] = []
-    session_length = get_session_length_by_genre(item.get("genre") or "")
-    social_game = is_social_genre(item.get("genre") or "")
-    intensity = get_intensity_by_genre(item.get("genre") or "")
-
-    if abs(session_length - time_available) <= 20:
-        reasons.append(f"Fits your {time_available} minute window")
-    if energy == "low" and intensity <= 1:
-        reasons.append("Low mental load for your current energy")
-    if energy == "high" and intensity >= 2:
-        reasons.append("High intensity option while you are focused")
-    if goal == "social" and social_game:
-        reasons.append("Built for social sessions")
-    if friends_online and social_game:
-        reasons.append("Friends online can make this more fun right now")
-    if not friends_online and not social_game:
-        reasons.append("Great solo flow when friends are offline")
-    if device == "mobile" and "browser" in (item.get("platform") or "").lower():
-        reasons.append("Playable on a lighter device setup")
-    if item.get("salePrice"):
-        reasons.append(f"On sale for ${float(item['salePrice']):.2f}")
-
-    return reasons[:3]
+def get_goal_detail_bonus(goal: str, descriptor_text: str) -> float:
+    positive_hits, negative_hits = get_goal_alignment(goal, descriptor_text)
+    return clamp((positive_hits * 0.8) - (negative_hits * 0.6), -1.2, 2.4)
 
 
 def rank_games(games: list[dict[str, Any]], context: dict[str, Any]) -> list[dict[str, Any]]:
     ranked: list[dict[str, Any]] = []
     for game in games:
-        genre = game.get("genre") or ""
-        session_length = get_session_length_by_genre(genre)
-        intensity = get_intensity_by_genre(genre)
-        social_game = is_social_genre(genre)
+        descriptor_text = compose_game_text(
+            game.get("genre") or "",
+            game.get("title") or "",
+            game.get("short_description") or "",
+            game.get("publisher") or "",
+            get_title_signal_terms(game.get("title") or ""),
+        )
+        session_length = get_session_length_by_text(descriptor_text)
+        intensity = get_intensity_by_text(descriptor_text)
+        social_game = is_social_game(descriptor_text)
 
         time_fit = 40 - clamp(abs(context["timeAvailable"] - session_length), 0, 40)
 
@@ -110,31 +76,28 @@ def rank_games(games: list[dict[str, Any]], context: dict[str, Any]) -> list[dic
             energy_fit = 18 if intensity >= 2 else 2
 
         social_fit = 14 if context["friendsOnline"] and social_game else (-5 if context["friendsOnline"] else (-2 if social_game else 8))
-        goal_boost = get_goal_boost(context["goal"], genre, social_game)
+        goal_boost = get_goal_boost(context["goal"], descriptor_text)
 
-        platform = (game.get("platform") or "").lower()
-        device = context["device"]
-        if device == "pc":
-            device_fit = 10 if "pc" in platform else 2
-        elif device == "console":
-            device_fit = 4 if "pc" in platform else 9
-        else:
-            device_fit = 10 if ("browser" in platform or "web" in platform) else 3
+        device_fit = get_device_fit(context["device"], game.get("platform") or "")
 
-        quality_signal = clamp((float(game.get("steamRatingPercent") or 70)) / 10, 0, 10)
-        score = time_fit + energy_fit + social_fit + goal_boost + device_fit + quality_signal
+        quality_signal = get_public_market_signal(game)
+        freshness_signal = get_release_freshness_signal(game.get("release_date"))
+        goal_detail_bonus = get_goal_detail_bonus(context["goal"], descriptor_text)
+        tie_breaker = stable_title_tiebreak(game.get("title") or "")
+        score = time_fit + energy_fit + social_fit + goal_boost + device_fit + quality_signal + freshness_signal + goal_detail_bonus + tie_breaker
 
         ranked_item = {
             **game,
             "sessionLength": session_length,
             "score": round(score, 4),
-            "reasons": create_reasons(
+            "reasons": create_standard_reasons(
                 game,
-                context["timeAvailable"],
-                context["energy"],
-                context["goal"],
-                context["friendsOnline"],
-                context["device"],
+                descriptor_text=descriptor_text,
+                time_available=context["timeAvailable"],
+                energy=context["energy"],
+                goal=context["goal"],
+                friends_online=context["friendsOnline"],
+                device=context["device"],
             ),
         }
         ranked.append(ranked_item)
@@ -194,6 +157,7 @@ def public_recommend():
                 "steamRatingPercent": deal.get("steamRatingPercent"),
                 "thumb": deal.get("thumb"),
                 "steamAppID": deal.get("steamAppID"),
+                "dealRating": deal.get("dealRating"),
             }
         )
 

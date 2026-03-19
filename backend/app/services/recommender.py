@@ -5,12 +5,32 @@ import time
 from dataclasses import dataclass
 
 from app.models import Feedback, UserPreference
+from app.services.context_ranking import (
+    clamp,
+    compose_game_text,
+    create_standard_reasons,
+    get_device_fit,
+    get_goal_boost,
+    get_intensity_by_text,
+    get_session_length_by_text,
+    get_title_signal_terms,
+    is_social_game,
+)
+
+
+MIN_PRIVATE_REVIEW_COUNT = 5000
+
+
+def has_minimum_review_count(catalog, minimum_reviews: int = MIN_PRIVATE_REVIEW_COUNT) -> bool:
+    total_reviews = (getattr(catalog, "positive", 0) or 0) + (getattr(catalog, "negative", 0) or 0)
+    return total_reviews >= minimum_reviews
 
 
 @dataclass
 class RecommendationContext:
     time_available_min: int
     energy_level: str
+    goal: str
     platform: str
     social_mode: str
     prefer_installed: bool
@@ -39,9 +59,6 @@ def parse_preference(pref: UserPreference):
     except Exception:
         return {}
 
-
-def clamp(v, lo, hi):
-    return max(lo, min(hi, v))
 
 
 def recency_days(last_played_ts: int | None):
@@ -72,41 +89,54 @@ def quality_signal(catalog):
 
 
 def score_candidate(game_stat, catalog, ctx: RecommendationContext, genre_weights: dict, comfort_bias: float):
-    reasons = []
     score = 0.0
+    reasons = []
 
-    # Time fit: prefer session length close to available time.
-    target = catalog.avg_session_minutes or 45
-    diff = abs(ctx.time_available_min - target)
-    time_fit = max(0.0, 1.0 - (diff / max(ctx.time_available_min, 30)))
-    score += time_fit * 35
-    if time_fit > 0.7:
-        reasons.append(f"Fits your {target} minute session window")
+    descriptor_text = compose_game_text(
+        catalog.name,
+        catalog.genres,
+        catalog.tags,
+        catalog.categories,
+        get_title_signal_terms(catalog.name),
+    )
+    session_length = catalog.avg_session_minutes or get_session_length_by_text(descriptor_text)
+    intensity = get_intensity_by_text(descriptor_text, catalog.difficulty or "")
+    social_game = is_social_game(descriptor_text, catalog.multiplayer_mode or "")
 
-    # Energy fit: low-energy prefers lower difficulty.
-    difficulty = (catalog.difficulty or "medium").lower()
+    time_fit = 40 - clamp(abs(ctx.time_available_min - session_length), 0, 40)
+    score += time_fit
+
     if ctx.energy_level == "low":
-        if difficulty in ("low", "easy"):
-            score += 20
-            reasons.append("Low mental load")
-        elif difficulty in ("high", "hard"):
-            score -= 10
+        score += 18 if intensity <= 1 else -10
     else:
-        if difficulty in ("high", "hard"):
-            score += 18
-            reasons.append("Good fit for high energy")
+        score += 18 if intensity >= 2 else 2
 
-    # Social fit + friends online boost.
-    mode = (catalog.multiplayer_mode or "solo").lower()
-    if ctx.social_mode == "social":
-        if mode in ("coop", "pvp", "mmo", "multiplayer"):
-            social = 10 + min(10, ctx.friends_online_count * 2)
-            score += social
-            reasons.append("Friends online can join")
-        else:
-            score -= 4
-    elif ctx.social_mode == "solo" and mode in ("solo", "singleplayer"):
-        score += 8
+    friends_online = ctx.social_mode == "social"
+    social_fit = 14 if friends_online and social_game else (-5 if friends_online else (-2 if social_game else 8))
+    score += social_fit
+
+    score += get_goal_boost(ctx.goal, descriptor_text, catalog.multiplayer_mode or "")
+
+    platform_text = " ".join(
+        label
+        for enabled, label in ((catalog.windows, "pc windows"), (catalog.mac, "pc mac"), (catalog.linux, "pc linux"))
+        if enabled
+    )
+    score += get_device_fit("pc", platform_text or "pc")
+
+    reasons.extend(
+        create_standard_reasons(
+            {"platform": platform_text or "pc"},
+            descriptor_text=descriptor_text,
+            time_available=ctx.time_available_min,
+            energy=ctx.energy_level,
+            goal=ctx.goal,
+            friends_online=friends_online,
+            device="pc",
+            multiplayer_mode=catalog.multiplayer_mode or "",
+            difficulty=catalog.difficulty or "",
+        )
+    )
 
     # Genre preference fit.
     gfit = 0.0
@@ -124,8 +154,8 @@ def score_candidate(game_stat, catalog, ctx: RecommendationContext, genre_weight
 
     # Installation / readiness proxy (Steam owned games don't always expose install state).
     # We treat very recent activity as "ready to launch" when user prefers installed titles.
+    recent_days = recency_days(game_stat.last_played)
     if ctx.prefer_installed:
-        recent_days = recency_days(game_stat.last_played)
         if game_stat.playtime_2weeks and game_stat.playtime_2weeks > 0:
             score += 5
             reasons.append("Recently active in your library")
@@ -139,7 +169,6 @@ def score_candidate(game_stat, catalog, ctx: RecommendationContext, genre_weight
         score += 6
 
     # Re-engagement boost for long-tail games: played before, but not in recent months.
-    recent_days = recency_days(game_stat.last_played)
     if recent_days is not None and recent_days >= 90 and (game_stat.playtime_forever or 0) >= 60:
         score += 4
         reasons.append("Good time to revisit")
@@ -157,7 +186,12 @@ def score_candidate(game_stat, catalog, ctx: RecommendationContext, genre_weight
     if signal >= 2:
         reasons.append("Strong overall quality signal")
 
-    return score, reasons[:3]
+    deduped_reasons = []
+    for reason in reasons:
+        if reason not in deduped_reasons:
+            deduped_reasons.append(reason)
+
+    return score, deduped_reasons[:3]
 
 
 def update_user_preference(db, auth_user_id: int, appid: int, action: str, genres: str, context_snapshot: dict):

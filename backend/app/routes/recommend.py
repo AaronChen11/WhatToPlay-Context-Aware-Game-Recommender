@@ -6,6 +6,7 @@ from app.models import SteamProfile, UserContextLog, UserGameStat, UserPreferenc
 from app.models_catalog import GameCatalog
 from app.services.recommender import (
     RecommendationContext,
+    has_minimum_review_count,
     parse_preference,
     score_candidate,
     update_user_preference,
@@ -23,6 +24,7 @@ def recommend_games():
 
     time_available_min = int(payload.get("time_available_min") or 45)
     energy_level = (payload.get("energy_level") or "low").strip().lower()
+    goal = (payload.get("goal") or "relax").strip().lower()
     platform = (payload.get("platform") or "windows").strip().lower()
     social_mode = (payload.get("social_mode") or "any").strip().lower()
     prefer_installed = bool(payload.get("prefer_installed", True))
@@ -30,6 +32,8 @@ def recommend_games():
 
     if energy_level not in ("low", "high"):
         return jsonify({"error": "invalid_energy_level"}), 400
+    if goal not in ("relax", "competitive", "story", "social"):
+        return jsonify({"error": "invalid_goal"}), 400
     if platform not in ("windows", "mac", "linux"):
         return jsonify({"error": "invalid_platform"}), 400
     if social_mode not in ("solo", "social", "any"):
@@ -52,6 +56,7 @@ def recommend_games():
     ctx = RecommendationContext(
         time_available_min=max(10, min(300, time_available_min)),
         energy_level=energy_level,
+        goal=goal,
         platform=platform,
         social_mode=social_mode,
         prefer_installed=prefer_installed,
@@ -74,6 +79,9 @@ def recommend_games():
     for stat in stats:
         cat = by_appid.get(stat.appid)
         if not cat:
+            continue
+
+        if not has_minimum_review_count(cat):
             continue
 
         # platform filtering (candidate generation)
@@ -113,6 +121,7 @@ def recommend_games():
         "context": {
             "time_available_min": ctx.time_available_min,
             "energy_level": ctx.energy_level,
+            "goal": ctx.goal,
             "platform": ctx.platform,
             "social_mode": ctx.social_mode,
         },
